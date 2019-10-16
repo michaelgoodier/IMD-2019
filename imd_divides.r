@@ -4,47 +4,47 @@ library(rgdal)
 library(spdplyr)
 library(leaflet)
 library(RColorBrewer)
-library(spdep)
 
-#Download IMD shapefile here: http://data-communities.opendata.arcgis.com/datasets/indices-of-multiple-deprivation-imd-2019-1
+#download IMD shapefile here: http://data-communities.opendata.arcgis.com/datasets/indices-of-multiple-deprivation-imd-2019-1
 imd <- readOGR("IMD.geojson")
 
-#filter to most and least deprived
+#filter to most and least deprived areas only
 top_and_bottom <- imd %>%
   filter(IMD_Decile == 1| IMD_Decile == 10) %>%
   mutate(opposite_decile = case_when(IMD_Decile == 10 ~ 1,IMD_Decile == 1 ~ 10))
 
-#---- Neighbour analysis ----
-# neighbors_nb <- poly2nb(top_and_bottom)
-# 
-# wts <- nb2listw(neighbors_nb, style="W",zero.policy=T)
-# top_and_bottom$dec_weight <- lag(wts,top_and_bottom$IMD_Decile,zero.policy=T)
+#---- neighbour analysis ----
+#calculate neighbours by polygons which touch each other
+neighbours_list <- rgeos::gTouches(top_and_bottom, returnDense = FALSE)
 
-neighbors_list <- rgeos::gTouches(top_and_bottom, returnDense = FALSE)
-list_lsoas <- lapply(neighbors_list, function(x) top_and_bottom$IMD_Decile)
-top_and_bottom$neighbour_deciles <- list_lsoas
-
-top_and_bottom_neighbors <- top_and_bottom %>%
-  mutate()
-
-top_and_bottom_neighbors_sf <- st_as_sf(top_and_bottom_neighbors) %>%
+#add in deciles of neighbours as a list of lists to our most / least deprived shapefile
+top_and_bottom$neighbour_deciles <- lapply(neighbours_list, function(x) top_and_bottom$IMD_Decile[x])
+                                           
+#covert to sf so we can do a rowwise filter to lsoas with the "opposite decile" in their neighbours list
+top_and_bottom_neighbours_sf <- st_as_sf(top_and_bottom) %>%
   rowwise() %>%
-  filter(opposite_decile %in% neighbour_deciles)
+  filter(opposite_decile %in% neighbour_deciles) %>%
+  ungroup()
 
-
-#Map in rleaflet----
+#filter original shapefile by the results of the above filter so we can map it
+final_areas <- top_and_bottom %>%
+  filter(lsoa11nm %in% top_and_bottom_neighbours_sf$lsoa11nm)
+                     
+#---- map in rleaflet ----
 #set color bins
 bins <- 2
-pal <- colorBin("YlOrRd", domain = top_and_bottom$IMD_Decile, bins = 2)
+pal <- colorBin("YlOrRd", domain = final_areas$IMD_Decile, bins = 2)
 
 #set labels
 labels <- sprintf(
   "<strong>%s</strong><br/>IMD Decile: %g",
-  top_and_bottom$lsoa11nm, top_and_bottom$IMD_Decile
+  final_areas$lsoa11nm, final_areas$IMD_Decile
 ) %>% lapply(htmltools::HTML)
 
+legend_labels <- c("1 (Most Deprived)","10 (Least Deprived)")
+                                           
 #generate map
-map <- leaflet(top_and_bottom) %>%
+map <- leaflet(final_areas) %>%
   addProviderTiles(providers$Esri.WorldGrayCanvas) %>%
   setView(lat=53, lng=-2, zoom=7) %>%
   addPolygons(smoothFactor = 0.5, 
@@ -62,9 +62,12 @@ map <- leaflet(top_and_bottom) %>%
               label = labels,
               labelOptions = labelOptions(style = list("font-weight" = "normal", padding = "3px 8px"),
                                           textsize = "15px",
-                                          direction = "auto"))
-
-
-
-
-
+                                          direction = "auto")) %>%
+  addLegend(pal = pal, 
+            values = ~IMD_Decile, 
+            opacity = 1,
+            title = "Deprivation Decile",
+            labFormat = function(type, cuts, p) {paste0(legend_labels)})
+                                           
+#export as csv to aid with writing
+write_csv(select(top_and_bottom_neighbors_sf,-neighbour_deciles,-neighbours,-geometry),"imd_divides.csv")
