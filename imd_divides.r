@@ -70,4 +70,4 @@ map <- leaflet(final_areas) %>%
             labFormat = function(type, cuts, p) {paste0(legend_labels)})
                                            
 #export as csv to aid with writing
-write_csv(select(top_and_bottom_neighbors_sf,-neighbour_deciles,-neighbours,-geometry),"imd_divides.csv")
+write_csv(select(top_and_bottom_neighbours_sf,-neighbour_deciles,-neighbours,-geometry),"imd_divides.csv")
